@@ -109,20 +109,34 @@ def prepare_dataloaders(train_data, train_labels, test_data, test_labels, batch_
 
 # ==================== 2. MODELS ====================
 def build_cnn(depth=2):
-    """Build lightweight CNN with variable depth"""
+    """Build lightweight CNN with careful depth handling"""
     layers = []
     in_ch, out_ch = 3, 32
+    pool_count = 0  # Track pooling operations
+    max_pools = 3   # Maximum pooling operations (32→16→8→4)
     
     for i in range(depth):
         layers.append(nn.Conv2d(in_ch, out_ch, 3, padding=1))
         layers.append(nn.ReLU(inplace=True))
         
-        if (i + 1) % 2 == 0:
+        # Pool less frequently for deeper networks
+        # Pool at layers: 2, 4, 8 (for depth 16)
+        should_pool = (
+            (i + 1) % 2 == 0 and           # Every 2 layers
+            pool_count < max_pools and     # But max 3 times
+            (i + 1) < depth - 2            # Not near end
+        )
+        
+        if should_pool:
             layers.append(nn.MaxPool2d(2, 2))
+            pool_count += 1
         
         in_ch = out_ch
         if i % 4 == 1:
             out_ch = min(out_ch * 2, 256)
+    
+    # Add global average pooling at the end (academic + safe)
+    layers.append(nn.AdaptiveAvgPool2d(1))
     
     class CNN(nn.Module):
         def __init__(self, conv_layers):

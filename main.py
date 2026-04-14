@@ -29,13 +29,7 @@ def get_cifar10_path():
     if os.path.exists(colab_path):
         print(f"Found Colab path: {colab_path}")
         return colab_path
-    
-    # Try local Windows path
-    local_path = r"D:\GRIFFITH\TRI1_2026\3008ICT DEEP LEARNING\AS1\cifar-10-batches-py"
-    if os.path.exists(local_path):
-        print(f"Found local path: {local_path}")
-        return local_path
-    
+   
     # Try GitHub clone path (if cloned locally)
     github_path = "./cifar-10-batches-py"
     if os.path.exists(github_path):

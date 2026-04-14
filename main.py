@@ -16,49 +16,42 @@ np.random.seed(0)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}\n")
 
-# Hyperparameters
-BATCH_SIZE = 64
-LEARNING_RATE = 0.001
-EPOCHS = 30
+# ==================== HYPERPARAMETERS (OPTIMIZED FOR SPEED) ====================
+BATCH_SIZE = 128  # Larger batch = faster training
+LEARNING_RATE = 0.01  # Slightly higher LR for faster convergence
+EPOCHS = 15  # Reduced from 30
+SUBSET_SIZE = 0.3  # Use 30% of data (faster, still accurate)
 
 # ==================== PATH SETUP ====================
 def get_cifar10_path():
     """Auto-detect path for Google Colab or GitHub"""
-    # Try Colab + Google Drive first
     colab_path = "/content/drive/My Drive/AS1/cifar-10-batches-py"
     if os.path.exists(colab_path):
-        print(f"✓ Found Colab path: {colab_path}\n")
+        print(f"✓ Found: Google Drive\n")
         return colab_path
     
-    # Try GitHub clone path
     github_path = "./cifar-10-batches-py"
     if os.path.exists(github_path):
-        print(f"✓ Found GitHub path: {github_path}\n")
+        print(f"✓ Found: GitHub\n")
         return github_path
     
-    # Debug: show what paths were checked
-    print("ERROR: Data not found in expected locations:")
-    print(f"  ✗ {colab_path}")
-    print(f"  ✗ {github_path}")
     raise FileNotFoundError("CIFAR-10 data not found.")
 
 CIFAR10_PATH = get_cifar10_path()
 
-# ==================== 1. LOAD LOCAL CIFAR-10 ====================
+# ==================== 1. LOAD CIFAR-10 ====================
 def unpickle(file):
     """Load pickled CIFAR-10 file"""
     with open(file, 'rb') as fo:
-        dict = pickle.load(fo, encoding='bytes')
-    return dict
+        return pickle.load(fo, encoding='bytes')
 
 def load_cifar10_local():
-    """Load CIFAR-10 from local directory"""
+    """Load CIFAR-10 dataset"""
     train_data = []
     train_labels = []
     
     for i in range(1, 6):
-        batch_path = f"{CIFAR10_PATH}/data_batch_{i}"
-        batch = unpickle(batch_path)
+        batch = unpickle(f"{CIFAR10_PATH}/data_batch_{i}")
         train_data.append(batch[b'data'])
         train_labels.extend(batch[b'labels'])
     
@@ -69,16 +62,21 @@ def load_cifar10_local():
     test_data = test_batch[b'data']
     test_labels = np.array(test_batch[b'labels'])
     
-    meta = unpickle(f"{CIFAR10_PATH}/batches.meta")
-    class_names = [name.decode('utf-8') for name in meta[b'label_names']]
+    # Use subset for faster training
+    subset_idx = int(len(train_data) * SUBSET_SIZE)
+    train_data = train_data[:subset_idx]
+    train_labels = train_labels[:subset_idx]
     
-    print(f"Training data: {train_data.shape}, Test data: {test_data.shape}\n")
+    # Use subset of test data too
+    test_subset = int(len(test_data) * SUBSET_SIZE)
+    test_data = test_data[:test_subset]
+    test_labels = test_labels[:test_subset]
     
-    return train_data, train_labels, test_data, test_labels, class_names
+    print(f"Train: {train_data.shape} | Test: {test_data.shape}\n")
+    return train_data, train_labels, test_data, test_labels
 
 def prepare_dataloaders(train_data, train_labels, test_data, test_labels, batch_size=BATCH_SIZE):
-    """Convert to PyTorch tensors and create DataLoaders"""
-    
+    """Prepare data loaders"""
     train_data = train_data.reshape(-1, 3, 32, 32).astype(np.float32) / 255.0
     test_data = test_data.reshape(-1, 3, 32, 32).astype(np.float32) / 255.0
     
@@ -90,11 +88,10 @@ def prepare_dataloaders(train_data, train_labels, test_data, test_labels, batch_
     test_data = torch.from_numpy(test_data)
     test_labels = torch.from_numpy(test_labels).long()
     
-    train_size = int(0.7 * len(train_data))
-    val_size = int(0.15 * len(train_data))
+    train_size = int(0.8 * len(train_data))
     
     train_dataset = TensorDataset(train_data[:train_size], train_labels[:train_size])
-    val_dataset = TensorDataset(train_data[train_size:train_size+val_size], train_labels[train_size:train_size+val_size])
+    val_dataset = TensorDataset(train_data[train_size:], train_labels[train_size:])
     test_dataset = TensorDataset(test_data, test_labels)
     
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -103,69 +100,72 @@ def prepare_dataloaders(train_data, train_labels, test_data, test_labels, batch_
     
     return train_loader, val_loader, test_loader
 
-# ==================== 2. CNN MODELS ====================
-def build_cnn(depth=2, use_residual=False, use_dropout=False, dropout_rate=0.3):
-    """Build CNN with configurable depth"""
+# ==================== 2. MODELS ====================
+def build_cnn(depth=2):
+    """Build lightweight CNN with variable depth"""
     layers = []
-    in_channels = 3
-    out_channels = 32
+    in_ch, out_ch = 3, 32
     
     for i in range(depth):
-        layers.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1))
+        layers.append(nn.Conv2d(in_ch, out_ch, 3, padding=1))
         layers.append(nn.ReLU(inplace=True))
-        
-        if use_dropout:
-            layers.append(nn.Dropout2d(dropout_rate))
         
         if (i + 1) % 2 == 0:
             layers.append(nn.MaxPool2d(2, 2))
         
-        in_channels = out_channels
+        in_ch = out_ch
         if i % 4 == 1:
-            out_channels = min(out_channels * 2, 256)
+            out_ch = min(out_ch * 2, 256)
     
-    class DynamicCNN(nn.Module):
-        def __init__(self, conv_layers, in_ch, use_res):
-            super(DynamicCNN, self).__init__()
-            self.conv_layers = nn.Sequential(*conv_layers)
-            self.use_residual = use_res
+    class CNN(nn.Module):
+        def __init__(self, conv_layers):
+            super().__init__()
+            self.conv = nn.Sequential(*conv_layers)
             self.flat_size = self._get_flat_size()
-            self.fc1 = nn.Linear(self.flat_size, 128)
-            self.fc2 = nn.Linear(128, 10)
+            self.fc = nn.Sequential(
+                nn.Linear(self.flat_size, 128),
+                nn.ReLU(),
+                nn.Linear(128, 10)
+            )
         
         def _get_flat_size(self):
             x = torch.randn(1, 3, 32, 32).to(device)
-            x = self.conv_layers(x)
+            x = self.conv(x)
             return x.view(x.size(0), -1).size(1)
         
         def forward(self, x):
-            x = self.conv_layers(x)
+            x = self.conv(x)
             x = x.view(x.size(0), -1)
-            x = torch.relu(self.fc1(x))
-            x = self.fc2(x)
-            return x
+            return self.fc(x)
     
-    return DynamicCNN(layers, in_channels, use_residual)
+    return CNN(layers)
 
 class SimpleCNN(nn.Module):
+    """Simple 2-layer CNN"""
     def __init__(self):
-        super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.fc = nn.Linear(64 * 8 * 8, 10)
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2, 2)
+        )
+        self.classifier = nn.Sequential(
+            nn.Linear(64 * 8 * 8, 128),
+            nn.ReLU(),
+            nn.Linear(128, 10)
+        )
     
     def forward(self, x):
-        x = torch.relu(self.conv1(x))
-        x = self.pool(x)
-        x = torch.relu(self.conv2(x))
-        x = self.pool(x)
+        x = self.features(x)
         x = x.view(x.size(0), -1)
-        x = self.fc(x)
-        return x
+        return self.classifier(x)
 
-# ==================== 3. TRAINING & EVALUATION ====================
+# ==================== 3. TRAINING ====================
 def train_epoch(model, train_loader, criterion, optimizer):
+    """Train one epoch"""
     model.train()
     total_loss = 0
     for images, labels in train_loader:
@@ -182,6 +182,7 @@ def train_epoch(model, train_loader, criterion, optimizer):
     return total_loss / len(train_loader)
 
 def evaluate(model, data_loader, criterion):
+    """Evaluate model"""
     model.eval()
     total_loss = 0
     correct = 0
@@ -198,13 +199,12 @@ def evaluate(model, data_loader, criterion):
             correct += (predicted == labels).sum().item()
             total += labels.size(0)
     
-    accuracy = correct / total
-    avg_loss = total_loss / len(data_loader)
-    return avg_loss, accuracy
+    return total_loss / len(data_loader), correct / total
 
-def train_model(model, train_loader, val_loader, test_loader, epochs=EPOCHS, lr=LEARNING_RATE, weight_decay=0):
+def train_model(model, train_loader, val_loader, test_loader, epochs=EPOCHS, lr=LEARNING_RATE):
+    """Train and evaluate model"""
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
     
     train_losses, val_losses, val_accs = [], [], []
     start_time = time.time()
@@ -217,13 +217,13 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=EPOCHS, lr=
         val_losses.append(val_loss)
         val_accs.append(val_acc)
         
-        if (epoch + 1) % 10 == 0:
-            print(f"  Epoch {epoch+1:2d}/{epochs} | Loss: {train_loss:.4f} | Val: {val_loss:.4f} | Acc: {val_acc:.4f}")
+        if (epoch + 1) % 5 == 0 or epoch == 0:
+            print(f"  Epoch {epoch+1:2d}/{epochs} | Loss: {train_loss:.3f} | Val: {val_loss:.3f} | Acc: {val_acc:.3f}")
     
     training_time = time.time() - start_time
     test_loss, test_acc = evaluate(model, test_loader, criterion)
     
-    print(f"  Final Test Accuracy: {test_acc:.4f} | Time: {training_time:.1f}s\n")
+    print(f"  Test Acc: {test_acc:.4f} | Time: {training_time:.0f}s\n")
     
     return {
         'train_losses': train_losses,
@@ -233,27 +233,27 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=EPOCHS, lr=
         'train_time': training_time
     }
 
-# ==================== EXPERIMENT (a): CNN DEPTH ANALYSIS ====================
+# ==================== EXPERIMENTS ====================
 def experiment_depth_analysis(train_loader, val_loader, test_loader):
-    """Train CNNs with different depths: 2, 8, 16, 32"""
+    """Experiment A: CNN Depth"""
     print("\n[Experiment A] CNN Depth Analysis")
     print("-" * 50)
     
     depths = [2, 8, 16, 32]
-    results_depth = {}
+    results = {}
     
     for depth in depths:
-        print(f"Training CNN (depth={depth})...")
+        print(f"Depth {depth}:")
         model = build_cnn(depth=depth).to(device)
-        results = train_model(model, train_loader, val_loader, test_loader, epochs=EPOCHS, lr=LEARNING_RATE)
-        results_depth[depth] = results
+        result = train_model(model, train_loader, val_loader, test_loader, epochs=EPOCHS, lr=LEARNING_RATE)
+        results[depth] = result
     
-    # Plot results
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    # Plot
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
     
     ax = axes[0, 0]
-    for depth in depths:
-        ax.plot(results_depth[depth]['train_losses'], label=f'Depth {depth}')
+    for d in depths:
+        ax.plot(results[d]['train_losses'], label=f'Depth {d}', marker='o')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Loss')
     ax.set_title('Training Loss')
@@ -261,8 +261,8 @@ def experiment_depth_analysis(train_loader, val_loader, test_loader):
     ax.grid(True, alpha=0.3)
     
     ax = axes[0, 1]
-    for depth in depths:
-        ax.plot(results_depth[depth]['val_losses'], label=f'Depth {depth}')
+    for d in depths:
+        ax.plot(results[d]['val_losses'], label=f'Depth {d}', marker='o')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Loss')
     ax.set_title('Validation Loss')
@@ -270,8 +270,8 @@ def experiment_depth_analysis(train_loader, val_loader, test_loader):
     ax.grid(True, alpha=0.3)
     
     ax = axes[1, 0]
-    for depth in depths:
-        ax.plot(results_depth[depth]['val_accs'], label=f'Depth {depth}')
+    for d in depths:
+        ax.plot(results[d]['val_accs'], label=f'Depth {d}', marker='o')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Accuracy')
     ax.set_title('Validation Accuracy')
@@ -279,45 +279,43 @@ def experiment_depth_analysis(train_loader, val_loader, test_loader):
     ax.grid(True, alpha=0.3)
     
     ax = axes[1, 1]
-    test_accs = [results_depth[d]['test_acc'] for d in depths]
+    test_accs = [results[d]['test_acc'] for d in depths]
     ax.bar([str(d) for d in depths], test_accs, color='steelblue', alpha=0.7)
-    ax.set_xlabel('Depth')
     ax.set_ylabel('Test Accuracy')
+    ax.set_xlabel('Depth')
     ax.set_title('Final Test Accuracy')
     ax.grid(True, axis='y', alpha=0.3)
     for i, acc in enumerate(test_accs):
         ax.text(i, acc + 0.01, f'{acc:.3f}', ha='center')
     
     plt.tight_layout()
-    plt.savefig('experiment_a_depth_analysis.png', dpi=150)
-    print("✓ Saved: experiment_a_depth_analysis.png")
+    plt.savefig('experiment_a_depth.png', dpi=100)
+    print("✓ Saved: experiment_a_depth.png")
     
-    print("\nResults Summary:")
-    print(f"{'Depth':<10} {'Test Acc':<12} {'Time (s)':<10}")
-    for depth in depths:
-        print(f"{depth:<10} {results_depth[depth]['test_acc']:.4f}      {results_depth[depth]['train_time']:.1f}")
+    print(f"\n{'Depth':<8} {'Test Acc':<10} {'Time (s)':<10}")
+    for d in depths:
+        print(f"{d:<8} {results[d]['test_acc']:.4f}     {results[d]['train_time']:.0f}")
 
-# ==================== EXPERIMENT (b): LEARNING RATE ANALYSIS ====================
 def experiment_learning_rate_analysis(train_loader, val_loader, test_loader):
-    """Train CNN with different learning rates"""
+    """Experiment B: Learning Rate"""
     print("\n[Experiment B] Learning Rate Analysis")
     print("-" * 50)
     
-    learning_rates = [0.000001, 0.0001, 0.001, 0.01, 1.0]
-    results_lr = {}
+    learning_rates = [0.0001, 0.001, 0.01, 0.1]
+    results = {}
     
     for lr in learning_rates:
-        print(f"Training with learning rate={lr}...")
+        print(f"LR {lr}:")
         model = SimpleCNN().to(device)
-        results = train_model(model, train_loader, val_loader, test_loader, epochs=EPOCHS, lr=lr)
-        results_lr[lr] = results
+        result = train_model(model, train_loader, val_loader, test_loader, epochs=EPOCHS, lr=lr)
+        results[lr] = result
     
-    # Plot results
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    # Plot
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
     
     ax = axes[0, 0]
     for lr in learning_rates:
-        ax.plot(results_lr[lr]['train_losses'], label=f'LR={lr}')
+        ax.plot(results[lr]['train_losses'], label=f'LR={lr}', marker='o')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Loss')
     ax.set_title('Training Loss')
@@ -326,7 +324,7 @@ def experiment_learning_rate_analysis(train_loader, val_loader, test_loader):
     
     ax = axes[0, 1]
     for lr in learning_rates:
-        ax.plot(results_lr[lr]['val_losses'], label=f'LR={lr}')
+        ax.plot(results[lr]['val_losses'], label=f'LR={lr}', marker='o')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Loss')
     ax.set_title('Validation Loss')
@@ -335,7 +333,7 @@ def experiment_learning_rate_analysis(train_loader, val_loader, test_loader):
     
     ax = axes[1, 0]
     for lr in learning_rates:
-        ax.plot(results_lr[lr]['val_accs'], label=f'LR={lr}')
+        ax.plot(results[lr]['val_accs'], label=f'LR={lr}', marker='o')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Accuracy')
     ax.set_title('Validation Accuracy')
@@ -343,48 +341,46 @@ def experiment_learning_rate_analysis(train_loader, val_loader, test_loader):
     ax.grid(True, alpha=0.3)
     
     ax = axes[1, 1]
-    test_accs = [results_lr[lr]['test_acc'] for lr in learning_rates]
+    test_accs = [results[lr]['test_acc'] for lr in learning_rates]
     ax.bar([str(lr) for lr in learning_rates], test_accs, color='coral', alpha=0.7)
-    ax.set_xlabel('Learning Rate')
     ax.set_ylabel('Test Accuracy')
+    ax.set_xlabel('Learning Rate')
     ax.set_title('Final Test Accuracy')
     ax.grid(True, axis='y', alpha=0.3)
     for i, acc in enumerate(test_accs):
         ax.text(i, acc + 0.01, f'{acc:.3f}', ha='center')
     
     plt.tight_layout()
-    plt.savefig('experiment_b_learning_rate_analysis.png', dpi=150)
-    print("✓ Saved: experiment_b_learning_rate_analysis.png")
+    plt.savefig('experiment_b_lr.png', dpi=100)
+    print("✓ Saved: experiment_b_lr.png")
     
-    print("\nResults Summary:")
-    print(f"{'LR':<15} {'Test Acc':<12} {'Time (s)':<10}")
+    print(f"\n{'LR':<10} {'Test Acc':<10} {'Time (s)':<10}")
     for lr in learning_rates:
-        print(f"{lr:<15} {results_lr[lr]['test_acc']:.4f}      {results_lr[lr]['train_time']:.1f}")
+        print(f"{lr:<10} {results[lr]['test_acc']:.4f}     {results[lr]['train_time']:.0f}")
 
-# ==================== EXPERIMENT (c): MINI-BATCH SIZE STUDY ====================
 def experiment_batch_size_study(train_data, train_labels, test_data, test_labels):
-    """Train CNN with different batch sizes"""
-    print("\n[Experiment C] Mini-batch Size Study")
+    """Experiment C: Batch Size"""
+    print("\n[Experiment C] Batch Size Study")
     print("-" * 50)
     
-    batch_sizes = [1, 8, 16, 64, 256]
-    results_bs = {}
+    batch_sizes = [32, 64, 128, 256]
+    results = {}
     
     for bs in batch_sizes:
-        print(f"Training with batch size={bs}...")
+        print(f"Batch Size {bs}:")
         train_loader, val_loader, test_loader = prepare_dataloaders(
             train_data, train_labels, test_data, test_labels, batch_size=bs
         )
         model = SimpleCNN().to(device)
-        results = train_model(model, train_loader, val_loader, test_loader, epochs=EPOCHS, lr=LEARNING_RATE)
-        results_bs[bs] = results
+        result = train_model(model, train_loader, val_loader, test_loader, epochs=EPOCHS, lr=LEARNING_RATE)
+        results[bs] = result
     
-    # Plot results
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    # Plot
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
     
     ax = axes[0, 0]
     for bs in batch_sizes:
-        ax.plot(results_bs[bs]['train_losses'], label=f'BS={bs}')
+        ax.plot(results[bs]['train_losses'], label=f'BS={bs}', marker='o')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Loss')
     ax.set_title('Training Loss')
@@ -393,7 +389,7 @@ def experiment_batch_size_study(train_data, train_labels, test_data, test_labels
     
     ax = axes[0, 1]
     for bs in batch_sizes:
-        ax.plot(results_bs[bs]['val_losses'], label=f'BS={bs}')
+        ax.plot(results[bs]['val_losses'], label=f'BS={bs}', marker='o')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Loss')
     ax.set_title('Validation Loss')
@@ -402,7 +398,7 @@ def experiment_batch_size_study(train_data, train_labels, test_data, test_labels
     
     ax = axes[1, 0]
     for bs in batch_sizes:
-        ax.plot(results_bs[bs]['val_accs'], label=f'BS={bs}')
+        ax.plot(results[bs]['val_accs'], label=f'BS={bs}', marker='o')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Accuracy')
     ax.set_title('Validation Accuracy')
@@ -410,28 +406,27 @@ def experiment_batch_size_study(train_data, train_labels, test_data, test_labels
     ax.grid(True, alpha=0.3)
     
     ax = axes[1, 1]
-    test_accs = [results_bs[bs]['test_acc'] for bs in batch_sizes]
+    test_accs = [results[bs]['test_acc'] for bs in batch_sizes]
     ax.bar([str(bs) for bs in batch_sizes], test_accs, color='lightgreen', alpha=0.7)
-    ax.set_xlabel('Batch Size')
     ax.set_ylabel('Test Accuracy')
+    ax.set_xlabel('Batch Size')
     ax.set_title('Final Test Accuracy')
     ax.grid(True, axis='y', alpha=0.3)
     for i, acc in enumerate(test_accs):
         ax.text(i, acc + 0.01, f'{acc:.3f}', ha='center')
     
     plt.tight_layout()
-    plt.savefig('experiment_c_batch_size_study.png', dpi=150)
-    print("✓ Saved: experiment_c_batch_size_study.png")
+    plt.savefig('experiment_c_bs.png', dpi=100)
+    print("✓ Saved: experiment_c_bs.png")
     
-    print("\nResults Summary:")
-    print(f"{'Batch Size':<15} {'Test Acc':<12} {'Time (s)':<10}")
+    print(f"\n{'Batch Size':<12} {'Test Acc':<10} {'Time (s)':<10}")
     for bs in batch_sizes:
-        print(f"{bs:<15} {results_bs[bs]['test_acc']:.4f}      {results_bs[bs]['train_time']:.1f}")
+        print(f"{bs:<12} {results[bs]['test_acc']:.4f}     {results[bs]['train_time']:.0f}")
 
 # ==================== MAIN ====================
 if __name__ == "__main__":
-    print("Loading CIFAR-10...")
-    train_data, train_labels, test_data, test_labels, class_names = load_cifar10_local()
+    print(f"Loading CIFAR-10 ({SUBSET_SIZE*100:.0f}% subset)...")
+    train_data, train_labels, test_data, test_labels = load_cifar10_local()
     
     print("Preparing DataLoaders...")
     train_loader, val_loader, test_loader = prepare_dataloaders(
@@ -439,7 +434,7 @@ if __name__ == "__main__":
     )
     
     while True:
-        print("\nSelect experiment: (a) Depth (b) Learning Rate (c) Batch Size (q) Quit")
+        print("Select: (a) Depth (b) Learning Rate (c) Batch Size (q) Quit")
         choice = input("Choice: ").strip().lower()
         
         if choice == 'a':
@@ -451,5 +446,3 @@ if __name__ == "__main__":
         elif choice == 'q':
             print("Done!")
             break
-        else:
-            print("Invalid choice.")

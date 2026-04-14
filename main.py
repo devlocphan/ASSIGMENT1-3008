@@ -23,20 +23,24 @@ EPOCHS = 30
 
 # ==================== PATH SETUP ====================
 def get_cifar10_path():
-    """Auto-detect path for local or Google Colab"""
-    # Try Colab path first
+    """Auto-detect path for Google Colab or GitHub"""
+    # Try Colab + Google Drive first
     colab_path = "/content/drive/My Drive/AS1/cifar-10-batches-py"
     if os.path.exists(colab_path):
-        print(f"Found Colab path: {colab_path}")
+        print(f"✓ Found Colab path: {colab_path}\n")
         return colab_path
-   
-    # Try GitHub clone path (if cloned locally)
+    
+    # Try GitHub clone path
     github_path = "./cifar-10-batches-py"
     if os.path.exists(github_path):
-        print(f"Found GitHub path: {github_path}")
+        print(f"✓ Found GitHub path: {github_path}\n")
         return github_path
     
-    raise FileNotFoundError("CIFAR-10 data not found. Please check paths.")
+    # Debug: show what paths were checked
+    print("ERROR: Data not found in expected locations:")
+    print(f"  ✗ {colab_path}")
+    print(f"  ✗ {github_path}")
+    raise FileNotFoundError("CIFAR-10 data not found.")
 
 CIFAR10_PATH = get_cifar10_path()
 

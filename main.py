@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, random_split
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
@@ -17,10 +17,10 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}\n")
 
 # ==================== HYPERPARAMETERS (OPTIMIZED FOR SPEED) ====================
-BATCH_SIZE = 128  # Larger batch = faster training
-LEARNING_RATE = 0.01  # Slightly higher LR for faster convergence
-EPOCHS = 15  # Reduced from 30
-SUBSET_SIZE = 0.3  # Use 30% of data (faster, still accurate)
+BATCH_SIZE = 128
+LEARNING_RATE = 0.01
+EPOCHS = 15
+SUBSET_SIZE = 0.3
 
 # ==================== PATH SETUP ====================
 def get_cifar10_path():
@@ -67,7 +67,6 @@ def load_cifar10_local():
     train_data = train_data[:subset_idx]
     train_labels = train_labels[:subset_idx]
     
-    # Use subset of test data too
     test_subset = int(len(test_data) * SUBSET_SIZE)
     test_data = test_data[:test_subset]
     test_labels = test_labels[:test_subset]
@@ -76,7 +75,7 @@ def load_cifar10_local():
     return train_data, train_labels, test_data, test_labels
 
 def prepare_dataloaders(train_data, train_labels, test_data, test_labels, batch_size=BATCH_SIZE):
-    """Prepare data loaders"""
+    """Prepare data loaders with randomized train/val split"""
     train_data = train_data.reshape(-1, 3, 32, 32).astype(np.float32) / 255.0
     test_data = test_data.reshape(-1, 3, 32, 32).astype(np.float32) / 255.0
     
@@ -88,10 +87,18 @@ def prepare_dataloaders(train_data, train_labels, test_data, test_labels, batch_
     test_data = torch.from_numpy(test_data)
     test_labels = torch.from_numpy(test_labels).long()
     
-    train_size = int(0.8 * len(train_data))
+    # Create full train dataset
+    full_train_dataset = TensorDataset(train_data, train_labels)
     
-    train_dataset = TensorDataset(train_data[:train_size], train_labels[:train_size])
-    val_dataset = TensorDataset(train_data[train_size:], train_labels[train_size:])
+    # Randomized split with fixed seed (reproducible)
+    train_size = int(0.8 * len(full_train_dataset))
+    val_size = len(full_train_dataset) - train_size
+    train_dataset, val_dataset = random_split(
+        full_train_dataset, 
+        [train_size, val_size],
+        generator=torch.Generator().manual_seed(0)
+    )
+    
     test_dataset = TensorDataset(test_data, test_labels)
     
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -121,24 +128,28 @@ def build_cnn(depth=2):
         def __init__(self, conv_layers):
             super().__init__()
             self.conv = nn.Sequential(*conv_layers)
-            self.flat_size = self._get_flat_size()
-            self.fc = nn.Sequential(
-                nn.Linear(self.flat_size, 128),
-                nn.ReLU(),
-                nn.Linear(128, 10)
-            )
+            self.flat_size = None
+            self.fc = None
         
-        def _get_flat_size(self):
-            x = torch.randn(1, 3, 32, 32).to(device)
-            x = self.conv(x)
-            return x.view(x.size(0), -1).size(1)
+        def _init_fc(self, x):
+            """Initialize FC layer on first forward pass"""
+            if self.fc is None:
+                with torch.no_grad():
+                    x_conv = self.conv(x)
+                    self.flat_size = x_conv.view(x_conv.size(0), -1).size(1)
+                    self.fc = nn.Sequential(
+                        nn.Linear(self.flat_size, 128),
+                        nn.ReLU(),
+                        nn.Linear(128, 10)
+                    ).to(device)
         
         def forward(self, x):
+            self._init_fc(x)
             x = self.conv(x)
             x = x.view(x.size(0), -1)
             return self.fc(x)
     
-    return CNN(layers)
+    return CNN(layers).to(device)
 
 class SimpleCNN(nn.Module):
     """Simple 2-layer CNN"""
@@ -244,7 +255,7 @@ def experiment_depth_analysis(train_loader, val_loader, test_loader):
     
     for depth in depths:
         print(f"Depth {depth}:")
-        model = build_cnn(depth=depth).to(device)
+        model = build_cnn(depth=depth)
         result = train_model(model, train_loader, val_loader, test_loader, epochs=EPOCHS, lr=LEARNING_RATE)
         results[depth] = result
     

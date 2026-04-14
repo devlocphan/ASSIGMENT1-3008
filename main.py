@@ -112,10 +112,11 @@ class CNN(nn.Module):
     def __init__(self, depth=2, use_dropout=False, use_residual=False):
         super().__init__()
         self.conv = create_cnn(depth, use_dropout, use_residual)
+        self.conv = self.conv.to(device)  # ✅ FIX: Move to device FIRST
         
         with torch.no_grad():
             x = torch.randn(1, 3, 32, 32).to(device)
-            x = self.conv(x)
+            x = self.conv(x)  # ✅ NOW both are on same device
             flat_size = x.view(1, -1).size(1)
         
         self.fc = nn.Sequential(
@@ -413,7 +414,6 @@ def experiment_batch_size_study(train_ds, val_ds, test_ds):
 
 # ==================== MAIN ====================
 if __name__ == "__main__":
-    print(f"Loading CIFAR-10 ({SUBSET_SIZE*100:.0f}% subset)...\n")
     train_ds, val_ds, test_ds = load_data_cifar10(SUBSET_SIZE)
     
     train_iter, val_iter, test_iter = load_batches(train_ds, val_ds, test_ds, BATCH_SIZE)

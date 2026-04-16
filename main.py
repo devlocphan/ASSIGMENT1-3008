@@ -162,7 +162,6 @@ def train_epoch(net, train_iter, loss_fn, optimizer):
     net.train()
     total_loss = 0
     num_batches = 0
-    
     for X, y in train_iter:
         X, y = X.to(device), y.to(device)
         y_hat = net(X)
@@ -415,9 +414,8 @@ def experiment_batch_size_study(train_ds, val_ds, test_ds):
 # ==================== MAIN ====================
 if __name__ == "__main__":
     train_ds, val_ds, test_ds = load_data_cifar10(SUBSET_SIZE)
-    
     train_iter, val_iter, test_iter = load_batches(train_ds, val_ds, test_ds, BATCH_SIZE)
-    
+    print("Renewed")
     while True:
         print("Select: (a) Depth (b) Learning Rate (c) Batch Size (q) Quit")
         choice = input("Choice: ").strip().lower()

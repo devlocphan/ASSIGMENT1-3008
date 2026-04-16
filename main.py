@@ -47,7 +47,11 @@ def load_data_cifar10(subset_size = 0.3):
         testset, [test_size, len(testset) - test_size],
         generator=torch.Generator().manual_seed(0)
     )
-    
+
+    print(f"Training data shape: {len(trainset)}, Labels shape: ({len(trainset)},)")
+    print(f"Test data shape: {len(testset)}, Labels shape: ({len(testset)},)")
+    print(f"Number of classes: 10")
+
     # Manual validation split (0.2)
     val_size = int(len(trainset) * 0.2)
     train_ds, val_ds = random_split(
@@ -406,6 +410,14 @@ def experiment_batch_size_study(train_ds, val_ds, test_ds):
 
 # ==================== MAIN ====================
 if __name__ == "__main__":
+    print("=" * 80)
+    print("CIFAR-10 NEURAL NETWORK TRAINING")
+    print("=" * 80)
+    print(f"Input size: 3x32x32")
+    print(f"Output size: 10")
+    print(f"Epochs: 20")
+    print(f"Validation ratio:0.2")
+    print("=" * 80)
     train_ds, val_ds, test_ds = load_data_cifar10(SUBSET_SIZE)
     train_iter, val_iter, test_iter = load_batches(train_ds, val_ds, test_ds, BATCH_SIZE)
     print("Renewed")

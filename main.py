@@ -17,8 +17,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # ==================== HYPERPARAMETERS ====================
 BATCH_SIZE = 128
 LEARNING_RATE = 0.01
-EPOCHS = 15
-SUBSET_SIZE = 0.3
+EPOCHS = 20
+SUBSET_SIZE = 1
 
 # ==================== 1. LOAD CIFAR-10 ====================
 def load_data_cifar10(subset_size=0.3):

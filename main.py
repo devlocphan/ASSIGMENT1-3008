@@ -21,7 +21,7 @@ EPOCHS = 20
 SUBSET_SIZE = 1
 
 # ==================== 1. LOAD CIFAR-10 ====================
-def load_data_cifar10(subset_size=0.3):
+def load_data_cifar10(subset_size = 1.0):
     """Load CIFAR-10 using torchvision"""
     transform = transforms.Compose([
         transforms.ToTensor(),
@@ -74,7 +74,7 @@ class Softmax(nn.Module):
     def forward(self, x):
         return self.fc(x.view(x.size(0), -1))
 
-def create_cnn(depth=2, use_dropout=False, use_residual=False):
+def create_cnn(depth=2):
     """Create CNN with variable depth"""
     layers = []
     in_ch, out_ch = 3, 32
@@ -85,13 +85,9 @@ def create_cnn(depth=2, use_dropout=False, use_residual=False):
         layers.append(nn.Conv2d(in_ch, out_ch, 3, padding=1))
         layers.append(nn.ReLU())
         
-        if use_dropout:
-            layers.append(nn.Dropout2d(0.25))
-        
         should_pool = (
             (i + 1) % 2 == 0 and 
-            pool_count < max_pools and 
-            (i + 1) < depth - 2
+            pool_count < max_pools
         )
         
         if should_pool:
@@ -109,9 +105,9 @@ def create_cnn(depth=2, use_dropout=False, use_residual=False):
 
 class CNN(nn.Module):
     """CNN with variable depth"""
-    def __init__(self, depth=2, use_dropout=False, use_residual=False):
+    def __init__(self, depth=2):
         super().__init__()
-        self.conv = create_cnn(depth, use_dropout, use_residual)
+        self.conv = create_cnn(depth)
         self.conv = self.conv.to(device)  # ✅ FIX: Move to device FIRST
         
         with torch.no_grad():
@@ -131,7 +127,6 @@ class CNN(nn.Module):
         return self.fc(x)
 
 class SimpleCNN(nn.Module):
-    """Simple CNN: 2 Conv layers, 1 MaxPool, 1 Linear with ReLU"""
     def __init__(self):
         super().__init__()
         self.features = nn.Sequential(
@@ -282,7 +277,7 @@ def experiment_depth_analysis(train_iter, val_iter, test_iter):
     
     plt.tight_layout()
     plt.savefig('experiment_a_depth.png', dpi=100)
-    print("✓ Saved: experiment_a_depth.png")
+    
     
     print(f"\n{'Depth':<8} {'Test Acc':<10} {'Time (s)':<10}")
     for d in depths:
@@ -343,7 +338,6 @@ def experiment_learning_rate_analysis(train_iter, val_iter, test_iter):
     
     plt.tight_layout()
     plt.savefig('experiment_b_lr.png', dpi=100)
-    print("✓ Saved: experiment_b_lr.png")
     
     print(f"\n{'LR':<12} {'Test Acc':<10} {'Time (s)':<10}")
     for lr in learning_rates:
@@ -405,7 +399,6 @@ def experiment_batch_size_study(train_ds, val_ds, test_ds):
     
     plt.tight_layout()
     plt.savefig('experiment_c_bs.png', dpi=100)
-    print("✓ Saved: experiment_c_bs.png")
     
     print(f"\n{'Batch Size':<12} {'Test Acc':<10} {'Time (s)':<10}")
     for bs in batch_sizes:
